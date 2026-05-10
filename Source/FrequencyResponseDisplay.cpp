@@ -307,37 +307,56 @@ void FrequencyResponseDisplay::drawSpectrum (juce::Graphics& g, double sampleRat
 {
     if (sampleRate <= 0.0) return;
 
-    const float w         = (float) getWidth();
-    const float h         = (float) getHeight();
-    const int   numBins   = (int) smoothedSpectrum.size(); // fftSize / 2
-    const float nyquist   = (float) sampleRate * 0.5f;
+    const float w       = (float) getWidth();
+    const float h       = (float) getHeight();
+    const int   numBins = (int) smoothedSpectrum.size(); // fftSize / 2
+    const float nyquist = (float) sampleRate * 0.5f;
 
-    // Map each X pixel to the FFT bin whose frequency falls at that pixel.
-    // We sample at every 2 pixels for performance — enough visual resolution.
+    // Spectrum display constants.
+    // -90 dB floor gives a full 90 dB dynamic range — enough to show quiet
+    // high-frequency content that would be hidden by a -60 or -80 dB floor.
+    static constexpr float kFloor  = -90.0f;
+    static constexpr float kRange  =  90.0f; // total dB range displayed
+
     juce::Path spectrumPath;
     bool started = false;
 
-    for (int px = 0; px < (int) w; px += 2)
+    // We step one pixel at a time and take the PEAK magnitude across all FFT bins
+    // whose frequencies fall between this pixel and the next pixel (bin range search).
+    //
+    // Why this matters at high frequencies:
+    //   The log X axis compresses the top octave (10k–20k Hz) into ~10% of the
+    //   display width.  In that region, many FFT bins map to the same pixel.
+    //   Reading only one bin per pixel would skip most of the energy — taking the
+    //   peak across the full bin range ensures nothing is missed.
+    //
+    //   At low frequencies the situation reverses: one bin spans many pixels, so
+    //   the peak search still returns the correct single bin for each pixel.
+
+    float prevBinF = 0.0f; // fractional bin index for the left edge of the previous pixel
+
+    for (int px = 0; px < (int) w; ++px)
     {
-        // Frequency at this pixel (log scale).
         const float freq = xToFrequency ((float) px);
         if (freq >= nyquist) break;
 
-        // Corresponding FFT bin index.
-        // bin = freq * fftSize / sampleRate  (linear frequency → bin mapping)
-        const int bin = juce::jlimit (0, numBins - 1,
-                                      (int) (freq / nyquist * (float) numBins));
+        // Fractional bin index for this pixel's frequency.
+        const float binF = freq / nyquist * (float) numBins;
 
-        const float magnitude = smoothedSpectrum[(size_t) bin];
+        // Integer bin range [binLo, binHi] covered between the previous and current pixel.
+        const int binLo = juce::jlimit (0, numBins - 1, (int) prevBinF);
+        const int binHi = juce::jlimit (0, numBins - 1, (int) binF);
 
-        // Convert linear magnitude to dB for display.
-        // Floor at -80 dB so silence doesn't draw to -inf.
-        const float dB = juce::Decibels::gainToDecibels (magnitude, -80.0f);
+        // Peak magnitude across all bins in this pixel's frequency range.
+        float peak = 0.0f;
+        for (int b = binLo; b <= binHi; ++b)
+            peak = std::max (peak, smoothedSpectrum[(size_t) b]);
 
-        // Map dB to Y: -80 dB → bottom of component, 0 dB → top.
-        // This is independent of the EQ ±24 dB scale — the spectrum always
-        // fills the full component height to give it a strong visual presence.
-        const float y = h * (1.0f - juce::jlimit (0.0f, 1.0f, (dB + 80.0f) / 80.0f));
+        prevBinF = binF;
+
+        // Convert to dB and map to Y coordinate.
+        const float dB = juce::Decibels::gainToDecibels (peak, kFloor);
+        const float y  = h * (1.0f - juce::jlimit (0.0f, 1.0f, (dB - kFloor) / kRange));
 
         if (! started)
         {

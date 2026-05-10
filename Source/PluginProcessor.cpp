@@ -302,8 +302,12 @@ void OSHAEQAudioProcessor::pushSampleToFFTFifo (float sample) noexcept
 
         // Copy the positive-frequency bins (first half) to fftMagnitudes.
         // Normalise by fftSize so the level is independent of block size.
+        // Normalise by fftSize/2, not fftSize.
+        // The Hann window reduces bin amplitude by ~2x relative to a rectangular window,
+        // so fftSize/2 compensates and keeps 0 dBFS signals near 0 dB after conversion.
+        const float norm = 1.0f / (float)(fftSize / 2);
         for (int i = 0; i < fftSize / 2; ++i)
-            fftMagnitudes[(size_t) i] = fftFifo[(size_t) i] / (float) fftSize;
+            fftMagnitudes[(size_t) i] = fftFifo[(size_t) i] * norm;
 
         fftDataReady = true; // signal the display thread
     }
