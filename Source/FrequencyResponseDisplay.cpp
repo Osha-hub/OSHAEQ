@@ -298,7 +298,10 @@ void FrequencyResponseDisplay::updateSpectrum()
     for (int i = 0; i < (int) smoothedSpectrum.size(); ++i)
     {
         const float newVal = raw[(size_t) i];
-        const float coeff  = newVal > smoothedSpectrum[(size_t) i] ? 0.5f : 0.08f;
+        // Attack 0.25 (rising) / release 0.06 (falling).
+        // Slower than before so transients don't produce harsh spikes,
+        // while the decay still trails naturally behind the music.
+        const float coeff  = newVal > smoothedSpectrum[(size_t) i] ? 0.25f : 0.06f;
         smoothedSpectrum[(size_t) i] += coeff * (newVal - smoothedSpectrum[(size_t) i]);
     }
 }
@@ -312,61 +315,57 @@ void FrequencyResponseDisplay::drawSpectrum (juce::Graphics& g, double sampleRat
     const int   numBins = (int) smoothedSpectrum.size(); // fftSize / 2
     const float nyquist = (float) sampleRate * 0.5f;
 
-    // Spectrum display constants.
-    // -90 dB floor gives a full 90 dB dynamic range — enough to show quiet
-    // high-frequency content that would be hidden by a -60 or -80 dB floor.
-    static constexpr float kFloor  = -90.0f;
-    static constexpr float kRange  =  90.0f; // total dB range displayed
+    static constexpr float kFloor = -90.0f;
+    static constexpr float kRange =  90.0f;
 
+    // ── Step 1: Frequency-domain octave-proportional smoothing ────────────
+    // For each bin i, average over a window whose half-width scales with i.
+    // This gives ~1/6-octave smoothing everywhere on the log scale:
+    //   • Low bins (i=10):  window ±1  → just neighbouring bins, preserves detail
+    //   • Mid bins (i=100): window ±16 → smoothes out ragged peaks
+    //   • High bins (i=900):window ±150→ blends the dense high-freq bins together
+    // The result removes the stepped/blocky look and rounds off sharp spikes
+    // while still showing the broad shape of the spectrum.
+    std::vector<float> display (numBins);
+    for (int i = 0; i < numBins; ++i)
+    {
+        const int halfWin = std::max (1, i / 6); // ~1/6-octave window
+        const int lo = std::max (0,          i - halfWin);
+        const int hi = std::min (numBins - 1, i + halfWin);
+        float sum = 0.0f;
+        for (int j = lo; j <= hi; ++j)
+            sum += smoothedSpectrum[(size_t) j];
+        display[(size_t) i] = sum / (float)(hi - lo + 1);
+    }
+
+    // ── Step 2: Draw with linear interpolation between adjacent bins ───────
+    // Linear interpolation ensures the path is a smooth curve rather than a
+    // step function.  At low frequencies one bin spans many pixels — without
+    // interpolation those pixels all get the same value, producing flat steps.
+    // With interpolation the path smoothly transitions between neighbouring bins.
     juce::Path spectrumPath;
     bool started = false;
-
-    // We step one pixel at a time and take the PEAK magnitude across all FFT bins
-    // whose frequencies fall between this pixel and the next pixel (bin range search).
-    //
-    // Why this matters at high frequencies:
-    //   The log X axis compresses the top octave (10k–20k Hz) into ~10% of the
-    //   display width.  In that region, many FFT bins map to the same pixel.
-    //   Reading only one bin per pixel would skip most of the energy — taking the
-    //   peak across the full bin range ensures nothing is missed.
-    //
-    //   At low frequencies the situation reverses: one bin spans many pixels, so
-    //   the peak search still returns the correct single bin for each pixel.
-
-    float prevBinF = 0.0f; // fractional bin index for the left edge of the previous pixel
 
     for (int px = 0; px < (int) w; ++px)
     {
         const float freq = xToFrequency ((float) px);
         if (freq >= nyquist) break;
 
-        // Fractional bin index for this pixel's frequency.
-        const float binF = freq / nyquist * (float) numBins;
+        // Fractional bin index for this pixel.
+        const float binF = freq / nyquist * (float)(numBins - 1);
+        const int   binA = juce::jlimit (0, numBins - 1, (int) binF);
+        const int   binB = juce::jlimit (0, numBins - 1, binA + 1);
+        const float frac = binF - (float) binA; // 0.0 = fully binA, 1.0 = fully binB
 
-        // Integer bin range [binLo, binHi] covered between the previous and current pixel.
-        const int binLo = juce::jlimit (0, numBins - 1, (int) prevBinF);
-        const int binHi = juce::jlimit (0, numBins - 1, (int) binF);
+        // Linearly interpolate between the two surrounding smoothed bin values.
+        const float mag = display[(size_t) binA] * (1.0f - frac)
+                        + display[(size_t) binB] * frac;
 
-        // Peak magnitude across all bins in this pixel's frequency range.
-        float peak = 0.0f;
-        for (int b = binLo; b <= binHi; ++b)
-            peak = std::max (peak, smoothedSpectrum[(size_t) b]);
-
-        prevBinF = binF;
-
-        // Convert to dB and map to Y coordinate.
-        const float dB = juce::Decibels::gainToDecibels (peak, kFloor);
+        const float dB = juce::Decibels::gainToDecibels (mag, kFloor);
         const float y  = h * (1.0f - juce::jlimit (0.0f, 1.0f, (dB - kFloor) / kRange));
 
-        if (! started)
-        {
-            spectrumPath.startNewSubPath ((float) px, y);
-            started = true;
-        }
-        else
-        {
-            spectrumPath.lineTo ((float) px, y);
-        }
+        if (! started) { spectrumPath.startNewSubPath ((float) px, y); started = true; }
+        else             spectrumPath.lineTo           ((float) px, y);
     }
 
     if (! started) return;
