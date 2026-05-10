@@ -116,6 +116,14 @@ public:
     void parameterChanged (const juce::String& parameterID, float newValue) override;
 
     // ----------------------------------------------------------
+    // FFT size constants — declared public so FrequencyResponseDisplay
+    // can size its smoothedSpectrum array without hardcoding a literal.
+    // Must appear before getFFTMagnitudes() which uses fftSize in its signature.
+    // ----------------------------------------------------------
+    static constexpr int fftOrder = 11;         // 2^11 = 2048 samples per FFT block
+    static constexpr int fftSize  = 1 << fftOrder;
+
+    // ----------------------------------------------------------
     // Public accessors used by the editor and display component
     // ----------------------------------------------------------
     juce::AudioProcessorValueTreeState& getAPVTS() noexcept { return apvts; }
@@ -124,16 +132,14 @@ public:
     double getCurrentSampleRate() const noexcept { return currentSampleRate; }
 
     /// Called by FrequencyResponseDisplay to retrieve the latest spectrum data.
-    /// Returns false if no new data has arrived since the last call.
+    /// Returns false if no new FFT block has arrived since the last call.
     bool getFFTMagnitudes (std::array<float, fftSize / 2>& dest)
     {
         if (! fftDataReady.exchange (false))
             return false;
-        dest = fftMagnitudes; // snapshot copy (see note on benign data race above)
+        dest = fftMagnitudes;
         return true;
     }
-
-    static constexpr int getFFTSize() noexcept { return fftSize; }
 
     // ----------------------------------------------------------
     // Static factory — called by the APVTS member initialiser
@@ -174,11 +180,7 @@ private:
     // ============================================================
     // SECTION: Spectrum Analyser (FFT)
     // ============================================================
-
-    /// FFT order: 2^11 = 2048 input samples per block — gives ~21 Hz resolution
-    /// at 44100 Hz sample rate, which is sufficient for a visual display.
-    static constexpr int fftOrder = 11;
-    static constexpr int fftSize  = 1 << fftOrder; // 2048
+    // fftOrder and fftSize are declared public above (needed in getFFTMagnitudes signature).
 
     juce::dsp::FFT fft { fftOrder };
 

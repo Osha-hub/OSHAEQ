@@ -15,7 +15,7 @@
 // ==============================================================================
 
 #include "FrequencyResponseDisplay.h"
-#include "PluginProcessor.h"   // full definition needed here (only forward-declared in .h)
+// PluginProcessor.h is already included transitively via FrequencyResponseDisplay.h
 
 // ============================================================
 // SECTION: Construction
@@ -286,7 +286,7 @@ void FrequencyResponseDisplay::updateSpectrum()
 {
     // Ask the processor for the latest FFT block (post-EQ magnitudes).
     // If no new block is ready yet, we keep the existing smoothedSpectrum.
-    std::array<float, 1024> raw {};
+    std::array<float, OSHAEQAudioProcessor::fftSize / 2> raw {};
     if (! processor.getFFTMagnitudes (raw))
         return;
 

@@ -25,10 +25,7 @@
 
 #include <JuceHeader.h>
 #include "EQBand.h"
-
-// Forward declaration — avoids a circular include with PluginProcessor.h.
-// FrequencyResponseDisplay.cpp includes PluginProcessor.h for the full type.
-class OSHAEQAudioProcessor;
+#include "PluginProcessor.h"  // needed for OSHAEQAudioProcessor::fftSize constant
 
 // ============================================================
 // SECTION: FrequencyResponseDisplay Class
@@ -129,8 +126,8 @@ private:
     // ============================================================
 
     /// Latest smoothed spectrum data, maintained by the display (message thread).
-    /// Size matches OSHAEQAudioProcessor::fftSize / 2.
-    std::array<float, 1024> smoothedSpectrum {};
+    /// Size matches OSHAEQAudioProcessor::fftSize / 2 = 1024.
+    std::array<float, OSHAEQAudioProcessor::fftSize / 2> smoothedSpectrum {};
 
     /// Polls the processor for new FFT data and blends it into smoothedSpectrum.
     /// Called each timerCallback tick before repaint().
