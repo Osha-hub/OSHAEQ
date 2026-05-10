@@ -279,6 +279,98 @@ void FrequencyResponseDisplay::mouseDoubleClick (const juce::MouseEvent& e)
 }
 
 // ============================================================
+// SECTION: Spectrum Analyser — Update & Draw
+// ============================================================
+
+void FrequencyResponseDisplay::updateSpectrum()
+{
+    // Ask the processor for the latest FFT block (post-EQ magnitudes).
+    // If no new block is ready yet, we keep the existing smoothedSpectrum.
+    std::array<float, 1024> raw {};
+    if (! processor.getFFTMagnitudes (raw))
+        return;
+
+    // Exponential moving average smoothing: blend new raw data with the
+    // previously displayed values.  The 0.15/0.85 ratio gives a visually
+    // responsive decay (≈ 5 frames to decay to ~50% at 30 fps).
+    // "Attack" (rising levels) is faster than "release" (falling) so that
+    // transients show clearly while the display doesn't flicker.
+    for (int i = 0; i < (int) smoothedSpectrum.size(); ++i)
+    {
+        const float newVal = raw[(size_t) i];
+        const float coeff  = newVal > smoothedSpectrum[(size_t) i] ? 0.5f : 0.08f;
+        smoothedSpectrum[(size_t) i] += coeff * (newVal - smoothedSpectrum[(size_t) i]);
+    }
+}
+
+void FrequencyResponseDisplay::drawSpectrum (juce::Graphics& g, double sampleRate) const
+{
+    if (sampleRate <= 0.0) return;
+
+    const float w         = (float) getWidth();
+    const float h         = (float) getHeight();
+    const int   numBins   = (int) smoothedSpectrum.size(); // fftSize / 2
+    const float nyquist   = (float) sampleRate * 0.5f;
+
+    // Map each X pixel to the FFT bin whose frequency falls at that pixel.
+    // We sample at every 2 pixels for performance — enough visual resolution.
+    juce::Path spectrumPath;
+    bool started = false;
+
+    for (int px = 0; px < (int) w; px += 2)
+    {
+        // Frequency at this pixel (log scale).
+        const float freq = xToFrequency ((float) px);
+        if (freq >= nyquist) break;
+
+        // Corresponding FFT bin index.
+        // bin = freq * fftSize / sampleRate  (linear frequency → bin mapping)
+        const int bin = juce::jlimit (0, numBins - 1,
+                                      (int) (freq / nyquist * (float) numBins));
+
+        const float magnitude = smoothedSpectrum[(size_t) bin];
+
+        // Convert linear magnitude to dB for display.
+        // Floor at -80 dB so silence doesn't draw to -inf.
+        const float dB = juce::Decibels::gainToDecibels (magnitude, -80.0f);
+
+        // Map dB to Y: -80 dB → bottom of component, 0 dB → top.
+        // This is independent of the EQ ±24 dB scale — the spectrum always
+        // fills the full component height to give it a strong visual presence.
+        const float y = h * (1.0f - juce::jlimit (0.0f, 1.0f, (dB + 80.0f) / 80.0f));
+
+        if (! started)
+        {
+            spectrumPath.startNewSubPath ((float) px, y);
+            started = true;
+        }
+        else
+        {
+            spectrumPath.lineTo ((float) px, y);
+        }
+    }
+
+    if (! started) return;
+
+    // Close the path at the bottom to create a filled shape.
+    spectrumPath.lineTo (w, h);
+    spectrumPath.lineTo (0.0f, h);
+    spectrumPath.closeSubPath();
+
+    // Fill with a vertical gradient: brighter teal at the top of each peak,
+    // fading to near-transparent at the bottom — gives a glow/depth effect.
+    juce::ColourGradient grad (juce::Colour (0x6600e5b0), 0.0f, 0.0f,   // top: teal
+                               juce::Colour (0x0800a080), 0.0f, h,       // bottom: faded
+                               false);
+    g.setGradientFill (grad);
+    g.fillPath (spectrumPath);
+
+    // Thin bright outline on the spectrum edge for extra crispness.
+    g.setColour (juce::Colour (0x4400ffb0));
+    g.strokePath (spectrumPath, juce::PathStrokeType (1.0f));
+}
+
+// ============================================================
 // SECTION: Painting
 // ============================================================
 
@@ -289,6 +381,7 @@ void FrequencyResponseDisplay::paint (juce::Graphics& g)
 
     drawBackground (g);
     drawGrid       (g);
+    drawSpectrum   (g, sr);   // spectrum drawn first — sits behind EQ curve
     drawCurve      (g, sr);
     drawBandNodes  (g, sr);
 }

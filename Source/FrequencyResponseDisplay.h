@@ -61,7 +61,7 @@ public:
     // ----------------------------------------------------------
     // Timer — repaint at ~30 fps
     // ----------------------------------------------------------
-    void timerCallback() override { repaint(); }
+    void timerCallback() override { updateSpectrum(); repaint(); }
 
 private:
     // ============================================================
@@ -123,6 +123,21 @@ private:
     /// Builds a vector of kNumPoints dB values representing the combined
     /// magnitude response of all active EQ bands at log-spaced frequencies.
     std::vector<float> computeMagnitudeResponse (double sampleRate) const;
+
+    // ============================================================
+    // SECTION: Spectrum Analyser
+    // ============================================================
+
+    /// Latest smoothed spectrum data, maintained by the display (message thread).
+    /// Size matches OSHAEQAudioProcessor::fftSize / 2.
+    std::array<float, 1024> smoothedSpectrum {};
+
+    /// Polls the processor for new FFT data and blends it into smoothedSpectrum.
+    /// Called each timerCallback tick before repaint().
+    void updateSpectrum();
+
+    /// Draws the smoothed spectrum as a filled translucent background layer.
+    void drawSpectrum (juce::Graphics& g, double sampleRate) const;
 
     // ============================================================
     // SECTION: Hit Testing

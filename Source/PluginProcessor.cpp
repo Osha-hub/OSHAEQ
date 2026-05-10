@@ -175,6 +175,10 @@ void OSHAEQAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
 
     // Force coefficient calculation on the first processBlock call.
     parametersChanged = true;
+
+    // Reset the FFT accumulation buffer and index.
+    fftFifo.fill (0.0f);
+    fifoIndex = 0;
 }
 
 void OSHAEQAudioProcessor::releaseResources()
@@ -260,6 +264,48 @@ void OSHAEQAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             if (!bypassed)
                 rightFilters[i].process (rightCtx);
         }
+    }
+
+    // ── Feed the spectrum analyser ─────────────────────────────────────────
+    // Push post-EQ samples from the left channel into the FFT FIFO so the
+    // display shows what the signal looks like AFTER the EQ is applied.
+    const float* leftData = buffer.getReadPointer (0);
+    for (int s = 0; s < buffer.getNumSamples(); ++s)
+        pushSampleToFFTFifo (leftData[s]);
+}
+
+// ============================================================
+// SECTION: Spectrum Analyser — FFT Accumulation
+// ============================================================
+
+void OSHAEQAudioProcessor::pushSampleToFFTFifo (float sample) noexcept
+{
+    // Accumulate samples in fftFifo[0..fftSize-1].  The upper half is kept at
+    // zero so the buffer can be passed directly to performFrequencyOnlyForwardTransform,
+    // which requires a buffer of size 2 * fftSize (complex in-place format).
+    if (fifoIndex < fftSize)
+        fftFifo[(size_t) fifoIndex] = sample;
+
+    ++fifoIndex;
+
+    if (fifoIndex == fftSize)
+    {
+        fifoIndex = 0;
+
+        // Apply the Hann window to reduce spectral leakage at block boundaries.
+        window.multiplyWithWindowingTable (fftFifo.data(), (size_t) fftSize);
+
+        // Compute the FFT in-place.  After this call, fftFifo[0..fftSize-1]
+        // contains the magnitude of each frequency bin (not complex pairs),
+        // normalised so that a full-scale sine wave → magnitude ≈ 1.0.
+        fft.performFrequencyOnlyForwardTransform (fftFifo.data(), true);
+
+        // Copy the positive-frequency bins (first half) to fftMagnitudes.
+        // Normalise by fftSize so the level is independent of block size.
+        for (int i = 0; i < fftSize / 2; ++i)
+            fftMagnitudes[(size_t) i] = fftFifo[(size_t) i] / (float) fftSize;
+
+        fftDataReady = true; // signal the display thread
     }
 }
 

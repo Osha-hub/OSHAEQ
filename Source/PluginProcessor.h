@@ -123,6 +123,18 @@ public:
     /// Safe to call from the message thread; returns 0 before prepareToPlay.
     double getCurrentSampleRate() const noexcept { return currentSampleRate; }
 
+    /// Called by FrequencyResponseDisplay to retrieve the latest spectrum data.
+    /// Returns false if no new data has arrived since the last call.
+    bool getFFTMagnitudes (std::array<float, fftSize / 2>& dest)
+    {
+        if (! fftDataReady.exchange (false))
+            return false;
+        dest = fftMagnitudes; // snapshot copy (see note on benign data race above)
+        return true;
+    }
+
+    static constexpr int getFFTSize() noexcept { return fftSize; }
+
     // ----------------------------------------------------------
     // Static factory — called by the APVTS member initialiser
     // ----------------------------------------------------------
@@ -158,6 +170,40 @@ private:
     /// processBlock() (audio thread) when it recalculates coefficients.
     /// Initialised true so prepareToPlay triggers the first coefficient update.
     std::atomic<bool> parametersChanged { true };
+
+    // ============================================================
+    // SECTION: Spectrum Analyser (FFT)
+    // ============================================================
+
+    /// FFT order: 2^11 = 2048 input samples per block — gives ~21 Hz resolution
+    /// at 44100 Hz sample rate, which is sufficient for a visual display.
+    static constexpr int fftOrder = 11;
+    static constexpr int fftSize  = 1 << fftOrder; // 2048
+
+    juce::dsp::FFT fft { fftOrder };
+
+    /// Hann window reduces spectral leakage at the cost of slightly wider peaks.
+    /// Applied to each block of samples before the FFT.
+    juce::dsp::WindowingFunction<float> window {
+        (size_t) fftSize, juce::dsp::WindowingFunction<float>::hann };
+
+    /// Circular accumulation buffer — samples from the left channel are pushed
+    /// here one at a time until fftSize samples are ready.
+    std::array<float, fftSize * 2> fftFifo {};   // *2 for in-place complex FFT
+    int fifoIndex { 0 };
+
+    /// The magnitude spectrum written by the audio thread and read by the display.
+    /// Accessing this from two threads without a lock is intentional for a visual
+    /// display: the worst case is one corrupted frame (unnoticeable to the eye).
+    std::array<float, fftSize / 2> fftMagnitudes {};
+
+    /// Set true by the audio thread when a fresh FFT block is available.
+    /// Cleared by the display thread after it copies the data.
+    std::atomic<bool> fftDataReady { false };
+
+    /// Pushes one sample into the accumulation FIFO.  When the FIFO is full,
+    /// computes the FFT and writes the result to fftMagnitudes.
+    void pushSampleToFFTFifo (float sample) noexcept;
 
     // ============================================================
     // SECTION: Private Helpers
