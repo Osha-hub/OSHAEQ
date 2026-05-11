@@ -7,7 +7,7 @@ A 6-band parametric equaliser VST3 / AU plugin built with JUCE 7. Real-time spec
 ![Formats](https://img.shields.io/badge/formats-VST3%20%7C%20AU-orange)
 ![Language](https://img.shields.io/badge/language-C%2B%2B17-blueviolet)
 
-![OSHAEQ screenshot](docs/oshaeq.png)
+![OSHAEQ screenshot](source/docs/oshaeq.png)
 
 ## Features
 
